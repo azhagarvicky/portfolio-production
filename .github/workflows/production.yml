@@ -1,0 +1,53 @@
+name: Deploy production
+# Runs only when asked — the "Run workflow" button here, or ./release.sh in the source repo.
+# Builds https://azhagar.com from azhagarvicky/portfolio.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Commit to release. Leave empty to release whatever is live on UAT."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Pick the commit to release
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.ref }}
+        run: |
+          if [ -z "$REF" ]; then
+            REF=$(gh run list -R azhagarvicky/portfolio -w uat.yml -s success -L 1 --json headSha --jq '.[0].headSha // empty')
+          fi
+          if [ -z "$REF" ]; then echo "::error::Nothing has been deployed to UAT yet"; exit 1; fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "### Released azhagarvicky/portfolio@${REF:0:7} to azhagar.com" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/checkout@v4
+        with:
+          repository: azhagarvicky/portfolio
+          ref: ${{ steps.pick.outputs.ref }}
+          path: source
+      - name: Build production
+        run: bash source/build.sh prod "$GITHUB_WORKSPACE/_site"
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
